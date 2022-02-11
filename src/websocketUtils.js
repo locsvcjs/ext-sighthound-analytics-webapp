@@ -1,14 +1,14 @@
 import {Client} from "@stomp/stompjs";
 
-import {getLSServerAddress, getLSServerToggle} from "./watchlistHandler";
+import {getLSServerAddress} from "./storageHandler";
 
 const EXCHANGE_NAME = "/exchange/alprdemo_exc";
 
 // Match these settings to what is in rabbitmq-launch.sh.
 const defaultBroker = {
     host: getLSServerAddress() || window.location.hostname,
-    port: 5672,
-    stompPort: 15674,
+    port: 41030, //5672,
+    stompPort: 41032, //15674,
     user: "guest",
     pass: "guest"
 };
@@ -45,7 +45,7 @@ export async function handleWebSocket(callback, address, savedClient, connectedS
                 }
                 await savedClient.deactivate();    
             }
-            const specifyServer = getLSServerToggle();
+            const specifyServer = true;
             const hostAddr = specifyServer ? host : address;
             client = new Client({
                 brokerURL: `ws://${hostAddr}:${defaultBroker.stompPort}/ws`,

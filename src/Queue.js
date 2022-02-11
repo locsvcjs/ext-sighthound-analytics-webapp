@@ -1,18 +1,7 @@
 /*
-
-Queue.js
-
-A function to represent a queue
-
-Created by Kate Morley - http://code.iamkate.com/ - and released under the terms
-of the CC0 1.0 Universal legal code:
-
-http://creativecommons.org/publicdomain/zero/1.0/legalcode
-
-*/
-
-/* Creates a new queue. A queue is a first-in-first-out (FIFO) data structure -
- * items are added to the end of the queue and removed from the front.
+A function to represent a queue Created by Kate Morley
+Creates a new queue. A queue is a first-in-first-out (FIFO) data structure -
+items are added to the end of the queue and removed from the front.
  */
 export function Queue(){
 
@@ -30,20 +19,13 @@ export function Queue(){
     return (queue.length === 0);
   }
 
-  /* Enqueues the specified item. The parameter is:
-   *
-   * item - the item to enqueue
-   */
+//Enqueues the specified item.
   this.enqueue = function(item){
     queue.push(item);
   }
 
-  /* Dequeues an item and returns it. If the queue is empty, the value
-   * 'undefined' is returned.
-   */
+//Dequeues an item and returns it. If queue is empty, 'undefined' is returned.
   this.dequeue = function(){
-
-    // if the queue is empty, return immediately
     if (queue.length === 0) return undefined;
 
     // store the item at the front of the queue
@@ -57,14 +39,10 @@ export function Queue(){
 
     // return the dequeued item
     return item;
-
   }
 
-  /* Returns the item at the front of the queue (without dequeuing it). If the
-   * queue is empty then undefined is returned.
-   */
+//Returns the item at the front of the queue (without dequeuing it). If queue is empty, 'undefined' is returned.
   this.peek = function(){
     return (queue.length > 0 ? queue[offset] : undefined);
   }
-
 }
