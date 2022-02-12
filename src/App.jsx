@@ -12,39 +12,9 @@ import {
     setLSServerAddress,
 } from "./storageHandler";
 
-/*
-Format of car and LP data we get:
-https://github.com/sighthoundinc/cloud-platform-schemas/blob/master/anypipe/examples/sighthoundAnalytics.json
-
-Format of car and LP data we will keep (from all json data rcvd);
-this will be combined car/lp/person data for those cars, license plates and people
-that are linked together:
-    'detections' format:
-        carId: string        // fill in when process links
-        lpId: string
-        carImageData: string // url of image data for a car
-        lpImageData: string  // url of image data for a license plate
-        bestTS: number       // in ms; will be bestTS of object found
-        firstTS: number      // in ms; will be firstTS of object found
-        boxCar: { height: number, width: number, x: number, y: number }
-        boxLp: { height: number, width: number, x: number, y: number }
-        carValue1: string    // make/model
-        carValue2: string    // color
-        lpValue1: string     // string
-        lpValue2: string     // region
-        type: string         // 'car' or 'lp' or 'person'
-        links: array         // array of objects to correlate car <--> lp
-        srcId: string        // id of the camera source
-        timeIn: number       // in ms; time since epoch of when this detection arrived via websocket
-        frameId: string      // id of the frame; points to the image, used for persons
-        lpValueConf: number  // confidence of the license plate string
-        lpRegionConf: number // confidence of the license plate region
-        mmConf: number       // confidence of the make/model values
-        colorConf: number    // confidence of the car color
-*/
-let emptying = false;        // flag indicating we're emptying the que, so don't re-enter que emptying fn
-let userControl = false;     // flag indicating the user controls which car is displayed on top part
+let emptying = false; // flag indicating we're emptying the que, so don't re-enter que emptying fn
 let stompClient = null;
+
 
 function App() {
     const [selectedDetection, setSelectedDetection] = React.useState({});
@@ -54,12 +24,14 @@ function App() {
     const [connected, setConnected] = React.useState(false);
     const [que,] = React.useState(new Queue());
 
+
     // Trick to get state into the callback function 'dataIsArriving'.
     // Use for ex carStateRef.current when you want to read from 'carDetections'.
     const carStateRef = React.useRef();
     const lpStateRef = React.useRef();
     carStateRef.current = carDetections;
     lpStateRef.current = lpDetections;
+
 
     // Set up for data arriving.
     React.useEffect(() => {
@@ -79,35 +51,56 @@ function App() {
     React.useEffect(() => {
     }, [carDetections]);
 
+
     async function initializeStomp(address) {
         stompClient = await handleWebSocket(dataIsArriving, address, stompClient, connectedStatus); // initialize websocket code
     }
-
     const connectedStatus = (status) => {
         setConnected(status);
     }
-
-
-
-
-
-
-
-    // Given links array like these:
-    //   [ {"metaClass": "licensePlates", "id": "guid here"} ],
-    //   [ {"metaClass": "vehicles", "id": "guid here"} ],
-    // get the guid for the first array entry with metaClass = 'type'.
-    function findLink(linkArray, type) {
-        for (const item of linkArray) {
-            if (item.metaClass === type) {
-                return item.id;
-            }
+    const checkQueue = async () => {
+        if (emptying) { return; }
+        while (que && !que.isEmpty()) {
+            emptying = true;
+            const item = que.dequeue();
+            await processItem(item);
         }
-        return "";
+        if (que.isEmpty()) { emptying = false; }
+    } 
+    async function dataIsArriving(data) { // Callback. Websocket pushes metadata into a memory queue.
+        if (que && data && data.body && typeof data.body == 'string') {
+            console.log("  -- Got websocket data=", data.body);
+            const rawData = JSON.parse(data.body);
+            que.enqueue(rawData);
+        }
     }
 
-    // Create our own data structure with this car object info.
-    function handleCarObject(car, carId, localDetections, imageData, srcId, timeIn, frameId) {
+
+    /*
+    Format of car and LP data we get:
+    https://github.com/sighthoundinc/cloud-platform-schemas/blob/master/anypipe/examples/sighthoundAnalytics.json
+    carId: string        // fill in when process links
+    lpId: string
+    carImageData: string // url of image data for a car
+    lpImageData: string  // url of image data for a license plate
+    bestTS: number       // in ms; will be bestTS of object found
+    firstTS: number      // in ms; will be firstTS of object found
+    boxCar: { height: number, width: number, x: number, y: number }
+    boxLp: { height: number, width: number, x: number, y: number }
+    carValue1: string    // make/model
+    carValue2: string    // color
+    lpValue1: string     // string
+    lpValue2: string     // region
+    type: string         // 'car' or 'lp' or 'person'
+    links: array         // array of objects to correlate car <--> lp
+    srcId: string        // id of the camera source
+    frameId: string      // id of the frame; points to the image, used for persons
+    lpValueConf: number  // confidence of the license plate string
+    lpRegionConf: number // confidence of the license plate region
+    mmConf: number       // confidence of the make/model values
+    colorConf: number    // confidence of the car color
+    */
+    function handleCarObject(car, carId, localDetections, imageData, srcId, frameId, ts) {
         const lpId = findLink(car.links, "licensePlates");
         const entry = {
             type: "car",
@@ -124,17 +117,15 @@ function App() {
             lpValue2: "unknown",                         // for lps: region
             links: car.links,
             srcId,
-            timeIn,
             frameId,
+            ts,
             mmConf: car.attributes.vehicleType?.detectionScore,
             colorConf: car.attributes.color?.detectionScore,
         }
         // console.log("----- Got car, id=", carId, " mm=", car.attributes.vehicleType?.value);
         localDetections.push(entry);
     }
-
-    // Create our own data structure with this lp object info.
-    function handleLpObject(lp, lpId, localDetections, imageData, srcId, timeIn, frameId) {
+    function handleLpObject(lp, lpId, localDetections, imageData, srcId, frameId, ts) {
         const carId = findLink(lp.links, "vehicles");
         const entry = {
             type: "lp",
@@ -149,78 +140,58 @@ function App() {
             lpValue2: lp.attributes.lpRegion?.value,// for lps: region
             links: lp.links,
             srcId,
-            timeIn,
             frameId,
+            ts,
             lpValueConf: lp.attributes.lpString?.detectionScore,
             lpRegionConf: lp.attributes.lpRegion?.detectionScore,
         }
         // console.log("----- Got license plate, id=", lpId, " value=", lp.attributes.lpString?.value);
         localDetections.push(entry);
     }
-
-
-    const checkQueue = async () => {
-        if (emptying) {
-            return;
+    function findLink(linkArray, type) {
+        for (const item of linkArray) {
+            if (item.metaClass === type) {return item.id;}
         }
-        while (que && !que.isEmpty()) {
-            emptying = true;
-            const item = que.dequeue();
-            //This is the equivalent of pulling an item from the main Queue
-            await processItem(item);
-        }
-        if (que.isEmpty()) {
-            emptying = false;
-        }
+        return "";
     }
 
-    // Callback function that websocket code will call when data arrives.
-    async function dataIsArriving(data) {
-        if (que && data && data.body && typeof data.body == 'string') {
-            console.log("  -- Got websocket data=", data.body);
 
-            // Add the time this packet arrived into the json data.
-            const rawData = JSON.parse(data.body);
-            rawData.timeIn = Date.now();
-            que.enqueue(rawData);
-        }
-    }
 
     const processItem = async (rawData) => {
-        const filename = rawData["frameId"] ? rawData["frameId"] + ".jpg" : rawData["imageFilename"];
+        const frameId = rawData["frameId"] || "";
         const metaClasses = rawData["metaClasses"] || {};
         const srcId = rawData["sourceId"] || "";
+        const ts = rawData["analyticsTimestamp"] || "";
+
+        // First get the image.
+        const filename = frameId + ".jpg";
+        const imageData = await getImageFromNodeServer(filename);
+
         const cars = metaClasses.hasOwnProperty("vehicles") ? metaClasses.vehicles : [];
         const lps = metaClasses.hasOwnProperty("licensePlates") ? metaClasses.licensePlates : [];
         const carObjects = Object.entries(cars);
         const lpObjects = Object.entries(lps);
-        const timeDataArrived = rawData.timeIn;
 
         const localDetections = [];
         const carDetections = [...carStateRef.current]; // get local copy of arrays
         const lpDetections = [...lpStateRef.current];
 
-        // First get the image.
-        const imageData = await getImageFromNodeServer(filename);
-
-        // Loop through incoming data. Make detections entries for each item (car or lp).
+        // Process all incoming cars in the json data, add to localDetections array.
         for (const outerObj of carObjects) {
             const guid = outerObj[0];
             const obj = outerObj[1];
-            handleCarObject(obj, guid, localDetections, imageData, srcId, timeDataArrived, rawData["frameId"]);
+            handleCarObject(obj, guid, localDetections, imageData, srcId, frameId, ts);
         }
-
-        // Process all incoming plates in the json data, add to local array.
+        // Process all incoming plates in the json data, add to localDetections array.
         for (const outerObj of lpObjects) {
             const guid = outerObj[0];
             const obj = outerObj[1];
-            handleLpObject(obj, guid, localDetections, imageData, srcId, timeDataArrived, rawData["frameId"]);
+            handleLpObject(obj, guid, localDetections, imageData, srcId, frameId, ts);
         }
 
-
-        // If any incoming local entries are *already* in finalDetections,
-        // then this entry should just update the one in finalDetections,
-        // otherwise create a brand new entry in finalDetections.
+        // If any incoming local entries exist in finalDetections,
+        // then this entry will update the one in finalDetections,
+        // else create new entry in finalDetections.
         const newItems = [];
         for (const oneDetection of localDetections) {
             // Find any 'car' detections that match this oneDetection.
@@ -298,7 +269,6 @@ function App() {
             }
             outputArray.push(car);
         }
-
         return outputArray;
     }
 
@@ -318,10 +288,8 @@ function App() {
                 // console.log(" +++ collapse - pushed unique plate=", det.lpValue1, " car=", det.carId);
             }
         }
-
         // Due to async processing, some items will appear out of order, plus we want the most recent
-        // first, so reverse the array and then sort it. The sort is faster if the array is almost
-        // in the right order to start with.
+        // first. Reverse array, sort it. Sorts faster if array is almost in the right order to begin.
         uniques.reverse();
         uniques.sort(compareFn);
         return uniques;
@@ -335,26 +303,6 @@ function App() {
 
     const sd = selectedDetection; // for brevity below
     const canvasH = 275;
-    let makeString = "";
-    let colorString = "";
-    let regionString = "";
-    let lpConfString = "";
-
-    if (sd?.type === "car" && sd?.carValue1) {
-        makeString = `${sd.carValue1} (conf: ${sd.mmConf})`;
-        if (sd?.carValue2) {
-            colorString += `${sd.carValue2} (conf: ${sd.colorConf})`;
-        }
-        if (sd?.lpValue1 && sd?.lpValueConf) {
-            lpConfString = `Plate conf: ${sd.lpValueConf}`
-        }
-        if (sd?.lpValue2) {
-            regionString = `${sd.lpValue2}`;
-            if (sd.lpRegionConf) {
-                lpConfString += `, state conf: ${sd.lpRegionConf}`
-            }
-        }
-    }
 
     return (
         <div>
@@ -363,17 +311,12 @@ function App() {
                 serverAddress={serverHostAddress}
                 connected={connected}
             />
-            <div style={{
-                backgroundColor: "rgba(38, 41, 66, .03)",
-                width: "100%",
-                height: 2
-            }} />
+            <hr/>
             <div>
                 <div className="selectedContainer">
                     <div style={{
                         marginLeft: "auto",
                         marginRight: "auto",
-                        marginBottom: 20,
                         maxHeight: { canvasH },
                     }}>
                         <div style={{
@@ -403,24 +346,20 @@ function App() {
                             flexDirection: "column",
                         }}>
                             <div className="selectedText">
-                                <h2 style={{ textAlign: "center", marginTop: 2 }}>{sd.lpValue1}</h2>
-                                <p style={{ marginBottom: 5, marginTop: -15 }}>{regionString}</p>
-                                <p style={{ marginBottom: 5 }}>{lpConfString}</p>
-                                <p>{makeString}</p>
-                                <p>{colorString}</p>
+                                <h2 style={{ textAlign: "center", marginTop: 2 }}>{sd.lpValue1} ({sd.lpValueConf})</h2>
+                                <p style={{ marginBottom: 5, marginTop: -15 }}>{sd.lpValue2} ({sd.lpRegionConf})</p>
+                                <p>{sd.carValue1} ({sd.mmConf})</p>
+                                <p>{sd.carValue2} ({sd.colorConf})</p>
                                 <p>{`Best TS: ${moment(sd.bestTS).format("YYYY-MM-DD HH:mm:ss.SSS")}`}</p>
                                 {/*<p>{`First TS: ${moment(sd.firstTS).format("YYYY-MM-DD HH:mm:ss.SSS")}`}</p>*/}
                                 {/*<p>{`First Frame: http://50.212.146.109:41034/frame/${sd.frameId}`} </p>*/}
-                                <p style={{ fontSize: 12 }}>{sd.carImageData} </p>
+                                <p style={{ fontSize: 11 }}>{sd.lpImageData} </p>
                             </div>
                         </div>
                     }
                 </div>
-                <ImageGrid
-                    detections={carDetections}
-                />
+                <ImageGrid detections={carDetections} />
             </div>
-            }
         </div>
     );
 
@@ -432,7 +371,7 @@ function App() {
 
     async function getImageFromNodeServer(filename) {
         try {
-            let nodeDemoServerUrl = process.env.REACT_APP_API_HOST ?? "http://localhost:4000";
+            let nodeDemoServerUrl = "http://localhost:4000";
             const serverAddress = getLSServerAddress();
             if (serverAddress) {
                 nodeDemoServerUrl = "http://" + serverAddress + ":41034"; //4000
